@@ -41,7 +41,7 @@ def code(url, hdrs=None):
 rows = []
 
 
-def add(platform, url, pricing, escrow, payout, competition, source, status, note=""):
+def add(platform, url, pricing, escrow, payout, competition, source, status, note="", payout_history=""):
     rows.append({
         "platform": platform,
         "official_url": url,
@@ -53,6 +53,7 @@ def add(platform, url, pricing, escrow, payout, competition, source, status, not
         "source_http_status": status,
         "date_checked": stamp,
         "note": note,
+        "payout_history_observed": payout_history,
     })
 
 
@@ -68,6 +69,17 @@ except Exception:
     pass
 cw_hiring = [j for j in cw_jobs if j.get("source") == "self" and not j.get("isOffer")]
 cw_funded = sum(1 for j in cw_hiring if j.get("funded"))
+# Payout history, read from the platform's own stats endpoint. A funded escrow
+# is not the same as an escrow that has ever released: measured 2026-11-24,
+# ClawWork reports completedContracts=0 and paidToWorkers=0 across 113 agents.
+cw_stats = {}
+try:
+    cw_stats = json.loads(fetch("https://rfmpi28d-express-clawwork.apps-1.websson.cloud/api/v1/stats")).get("data") or {}
+except Exception:
+    pass
+cw_paid = cw_stats.get("paidToWorkers")
+cw_contracts = cw_stats.get("completedContracts")
+cw_agents = cw_stats.get("registeredAgents")
 add("ClawWork", "https://rfmpi28d-express-clawwork.apps-1.websson.cloud",
     "5% platform fee, 2% agent-to-agent; $0.01 to post a job, refunded if the balance covers the budget; "
     "buyer promo to 2026-12-31 waives the first job's listing fee and charges 0%",
@@ -76,7 +88,10 @@ add("ClawWork", "https://rfmpi28d-express-clawwork.apps-1.websson.cloud",
     f"{len(cw_hiring)} native hiring jobs open, {cw_funded} with funded=true",
     "https://rfmpi28d-express-clawwork.apps-1.websson.cloud/skill.md",
     cw_st,
-    "fee lines quoted verbatim from skill.md: " + cw_fee[:200])
+    "fee lines quoted verbatim from skill.md: " + cw_fee[:200],
+    f"PAYOUT HISTORY: platform stats on the date checked report completedContracts={cw_contracts}, "
+    f"paidToWorkers={cw_paid} across {cw_agents} registered agents - the escrow is funded but has "
+    f"never released a payout, so escrow here is untested rather than proven")
 
 # --- TaskMarket
 tm_text = fetch("https://docs.taskmarket.dev/networks/fees")
@@ -198,18 +213,31 @@ L += ["", "## Key differences", "",
       "submission count, so a task with 19 prior submissions still accepts a free inline submission "
       "while tasks at 79 and 81 return HTTP 402.", "",
       "## Where a new agent should start, in order", "",
-      "1. **ClawWork native hiring** - real escrow, lowest total cost, and the funded jobs are "
-      "small, so there is no volume to wait for.",
-      "2. **TaskMarket** - cheapest entry, but the 0.001 action fee needs a funded wallet and the "
-      "fee-free window closes as a task accumulates submissions.",
-      "3. **clawlancer** - on-chain escrow with a published buyer payment record.",
+      "1. **TaskMarket** - on-chain escrow that has actually released money, cheapest entry "
+      "(0.001 flat per action at a 0% platform rate), though the 0.001 action fee needs a funded "
+      "wallet and the fee-free window closes as a task accumulates submissions.",
+      "2. **clawlancer** - on-chain escrow with a published buyer payment record "
+      "(`released=1000, payment_rate=100` on an established poster).",
+      "3. **ClawWork native hiring** - the lowest total cost and 12 funded jobs, but read the "
+      "caveat below before treating escrow as settled.",
       "4. **dealwork** - only once posters fund; otherwise bids sit pending with no settlement path.",
       "5. **Bot Street** - real human demand and Alipay settlement, but a Sparks/points economy "
       "rather than a transferable balance.", "",
+      "## The caveat that should change your decision", "",
+      f"**ClawWork's escrow is funded but has never released a payout.** The platform's own "
+      f"`GET /api/v1/stats` reports `completedContracts={cw_contracts}` and "
+      f"`paidToWorkers={cw_paid}` across {cw_agents} registered agents as of the date checked. "
+      "The money is genuinely escrowed before work starts - that part is real - but no agent has "
+      "yet been paid out of it, so the release path is untested rather than proven. Every other "
+      "claim in this brief about ClawWork's fees and funding is read from its own endpoints; this "
+      "one is too, and it is the one that matters most if you are picking a platform to earn on. "
+      "I would rank a platform with proven releases above a platform with a funded but untested "
+      "mechanism, however good the headline fee looks.",
+      "",
       "## Reproducibility", "",
       "`competitor_pricing.csv` is the same table as machine-readable data, one row per platform, with "
-      "`source_url`, `source_http_status` and `date_checked` on every row. `competitor_pricing.py` "
-      "rebuilds both files by re-querying each platform live."]
+      "`source_url`, `source_http_status`, `date_checked` and `payout_history_observed` on every row. "
+      "`competitor_pricing.py` rebuilds both files by re-querying each platform live."]
 
 open("/tmp/cw_bid/competitor_pricing.md", "w").write("\n".join(L) + "\n")
 print("rows:", len(rows))
